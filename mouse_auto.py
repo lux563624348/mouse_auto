@@ -1,24 +1,38 @@
-import pyautogui
+import rumps
+import threading
 import time
+from pynput.mouse import Controller
 
-def mouse_joggler(interval=15, distance=10):
-    """
-    Move the mouse slightly every `interval` seconds.
+class MouseJigglerApp(rumps.App):
+    def __init__(self):
+        super(MouseJigglerApp, self).__init__("🖱️ Jiggler")
+        self.interval = 15   # seconds
+        self.distance = 10   # pixels
+        self.jiggling = False
+        self.mouse = Controller()
+        
+        self.menu = [
+            rumps.MenuItem(title="Start Jiggling", callback=self.toggle_jiggling),
+            None,  # separator
+            rumps.MenuItem(title="Quit", callback=rumps.quit_application)
+        ]
     
-    :param interval: time between jiggles in seconds
-    :param distance: how far to move the mouse in pixels
-    """
-    print(f"Mouse jiggler started. Moving every {interval} seconds. Press Ctrl+C to stop.")
-    try:
-        while True:
-            x, y = pyautogui.position()  # Get current position
-            pyautogui.moveTo(x + distance, y)  # Move right
+    def toggle_jiggling(self, sender):
+        if not self.jiggling:
+            sender.title = "Stop Jiggling"
+            self.jiggling = True
+            threading.Thread(target=self._jiggle_loop, daemon=True).start()
+        else:
+            sender.title = "Start Jiggling"
+            self.jiggling = False
+
+    def _jiggle_loop(self):
+        while self.jiggling:
+            x, y = self.mouse.position
+            self.mouse.position = (x + self.distance, y)
             time.sleep(0.2)
-            pyautogui.moveTo(x, y)  # Move back
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        print("\nMouse jiggler stopped.")
+            self.mouse.position = (x, y)
+            time.sleep(self.interval)
 
 if __name__ == "__main__":
-    mouse_joggler(15, 10)
-
+    MouseJigglerApp().run()
