@@ -1,5 +1,5 @@
 # go to your venv bin folder (adjust path if needed)
-cd /Users/xiang/github/mouse_auto/.venv/bin
+cd ~github/mouse_auto/.venv/bin
 
 # create a minimal Info.plist (overwrites if exists — safe to inspect first)
 cat > Info.plist <<'EOF'
@@ -15,3 +15,4 @@ EOF
 
 # verify
 plutil -p Info.plist
+
