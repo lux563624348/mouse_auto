@@ -7,14 +7,6 @@ from zoneinfo import ZoneInfo
 from pynput.mouse import Controller
 from AppKit import NSScreen
 
-
-def safe_notify(self, title, subtitle, message):
-    try:
-        rumps.notification(title=title, subtitle=subtitle, message=message)
-    except Exception as e:
-        print(f"[Notification skipped: {e}] {title} — {subtitle}: {message}")
-
-
 class MouseJigglerApp(rumps.App):
     def __init__(self):
         super(MouseJigglerApp, self).__init__("🖱️  Jiggler")
@@ -35,41 +27,57 @@ class MouseJigglerApp(rumps.App):
         self.region_y1 = self.screen_height // 3
         self.region_y2 = 2 * self.screen_height // 3
 
-        # Create Stop-In submenu
-        self.stop_in_menu = rumps.MenuItem("Stop In ⏱")
+        # Create "Start for" submenu (1..5 hours)
+        self.start_for_menu = rumps.MenuItem("Start for ⏱")
         for hrs in range(1, 6):
-            self.stop_in_menu.add(rumps.MenuItem(
+            self.start_for_menu.add(rumps.MenuItem(
                 title=f"{hrs} hour{'s' if hrs > 1 else ''}",
-                callback=lambda sender, h=hrs: self.set_stop_timer(h)
+                callback=lambda sender, h=hrs: self.start_for(h)
             ))
 
+        # Manual stop item (always present so user can stop early)
+        self.stop_now_item = rumps.MenuItem(title="Stop Now", callback=self.manual_stop)
+
+        # Build menu
         self.menu = [
-            rumps.MenuItem(title="Start Jiggling", callback=self.toggle_jiggling),
-            self.stop_in_menu,
+            self.start_for_menu,
+            self.stop_now_item,
             None,
             rumps.MenuItem(title="Quit", callback=rumps.quit_application)
         ]
 
-    def set_stop_timer(self, hours):
-        """Schedule stop time"""
-        self.stop_time = datetime.now(ZoneInfo("US/Eastern")) + timedelta(hours=hours)
-        rumps.notification(
-            title="Mouse Jiggler",
-            subtitle="Timer Set",
-            message=f"Will stop in {hours} hour{'s' if hours > 1 else ''}."
-        )
-        print(f"🕒 Stop scheduled for {self.stop_time.strftime('%I:%M %p EST')}")
+    def start_for(self, hours):
+        """Start jiggling for a fixed number of hours (1..5). If already jiggling, extend/restart timer."""
+        now_est = datetime.now(ZoneInfo("US/Eastern"))
+        self.stop_time = now_est + timedelta(hours=hours)
 
-    def toggle_jiggling(self, sender):
+        # If not currently jiggling, start the thread
         if not self.jiggling:
-            sender.title = "Stop Jiggling"
             self.jiggling = True
             threading.Thread(target=self._jiggle_loop, daemon=True).start()
+            rumps.notification(
+                title="Mouse Jiggler",
+                subtitle="Started",
+                message=f"Jiggling for {hours} hour{'s' if hours > 1 else ''}."
+            )
+            print(f"▶️ Started jiggling; will stop at {self.stop_time.strftime('%I:%M %p EST')}")
         else:
-            sender.title = "Start Jiggling"
-            self.jiggling = False
-            self.stop_time = None
+            # already jiggling: update stop_time to new value
+            rumps.notification(
+                title="Mouse Jiggler",
+                subtitle="Timer Updated",
+                message=f"Will now stop in {hours} hour{'s' if hours > 1 else ''}."
+            )
+            print(f"🔁 Timer updated; will stop at {self.stop_time.strftime('%I:%M %p EST')}")
+
+    def manual_stop(self, sender=None):
+        """User requested an immediate stop."""
+        if self.jiggling:
+            self._stop_jiggling("Stopped manually.")
             print("🛑 Jiggling manually stopped.")
+        else:
+            rumps.notification(title="Mouse Jiggler", subtitle="Not running", message="Jiggler is not currently running.")
+            print("ℹ️ Manual stop requested but jiggler was not running.")
 
     def _jiggle_loop(self):
         while self.jiggling:
@@ -87,7 +95,7 @@ class MouseJigglerApp(rumps.App):
                 self._stop_jiggling("Timer reached — jiggler stopped.")
                 break
 
-            # --- Move the mouse ---
+            # --- Move the mouse within center 1/3 region ---
             x, y = self.mouse.position
             dx = random.randint(-self.distance, self.distance)
             dy = random.randint(-self.distance, self.distance)
@@ -95,13 +103,21 @@ class MouseJigglerApp(rumps.App):
             new_y = min(max(y + dy, self.region_y1), self.region_y2)
 
             print(f"Moving to ({new_x}, {new_y})")
-            self.mouse.position = (new_x, new_y)
+            try:
+                self.mouse.position = (new_x, new_y)
+            except Exception as e:
+                # Some environments can throw when setting mouse position; log and continue
+                print(f"⚠️ Failed to move mouse: {e}")
 
-            # Random delay
+            # Random delay between moves
             time.sleep(random.uniform(10, 20))
 
+        # ensure flags are cleared if loop exits
+        self.jiggling = False
+        self.stop_time = None
+
     def _stop_jiggling(self, message):
-        """Handle stopping logic"""
+        """Handle stopping logic and notify the user."""
         self.jiggling = False
         self.stop_time = None
         rumps.notification(
@@ -109,9 +125,6 @@ class MouseJigglerApp(rumps.App):
             subtitle="Stopped",
             message=message
         )
-        # Reset menu button title
-        self.menu["Start Jiggling"].title = "Start Jiggling"
-
 
 if __name__ == "__main__":
     MouseJigglerApp().run()
