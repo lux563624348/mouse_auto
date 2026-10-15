@@ -16,16 +16,11 @@ class MouseJigglerApp(rumps.App):
         self.stop_time = None
         self.mouse = Controller()
 
-        # Get screen dimensions
-        screen = NSScreen.mainScreen().frame()
-        self.screen_width = int(screen.size.width)
-        self.screen_height = int(screen.size.height)
-
-        # Define center 1/3 region
-        self.region_x1 = self.screen_width // 3
-        self.region_x2 = 2 * self.screen_width // 3
-        self.region_y1 = self.screen_height // 3
-        self.region_y2 = 2 * self.screen_height // 3
+        # Screen information may not be ready when launched. Resolve it when
+        # the user starts the jiggler so the menu app can still launch cleanly.
+        self.screen_width = self.screen_height = None
+        self.region_x1 = self.region_x2 = None
+        self.region_y1 = self.region_y2 = None
 
         # Create "Start for" submenu (1..5 hours)
         self.start_for_menu = rumps.MenuItem("Start for ⏱")
@@ -48,27 +43,56 @@ class MouseJigglerApp(rumps.App):
 
     def start_for(self, hours):
         """Start jiggling for a fixed number of hours (1..5). If already jiggling, extend/restart timer."""
+        if not self._update_screen_bounds():
+            self._notify(
+                title="Mouse Jiggler",
+                subtitle="Display unavailable",
+                message="No display is available yet. Try starting again after the desktop loads."
+            )
+            return
+
         now_est = datetime.now(ZoneInfo("US/Eastern"))
-        self.stop_time = now_est + timedelta(hours=hours)
+        stop_time = now_est + timedelta(hours=hours)
+        self.stop_time = stop_time
 
         # If not currently jiggling, start the thread
         if not self.jiggling:
             self.jiggling = True
             threading.Thread(target=self._jiggle_loop, daemon=True).start()
-            rumps.notification(
+            self._notify(
                 title="Mouse Jiggler",
                 subtitle="Started",
                 message=f"Jiggling for {hours} hour{'s' if hours > 1 else ''}."
             )
-            print(f"▶️ Started jiggling; will stop at {self.stop_time.strftime('%I:%M %p EST')}")
+            print(f"▶️ Started jiggling; will stop at {stop_time.strftime('%I:%M %p EST')}")
         else:
             # already jiggling: update stop_time to new value
-            rumps.notification(
+            self._notify(
                 title="Mouse Jiggler",
                 subtitle="Timer Updated",
                 message=f"Will now stop in {hours} hour{'s' if hours > 1 else ''}."
             )
-            print(f"🔁 Timer updated; will stop at {self.stop_time.strftime('%I:%M %p EST')}")
+            print(f"🔁 Timer updated; will stop at {stop_time.strftime('%I:%M %p EST')}")
+
+    def _update_screen_bounds(self):
+        """Refresh the movement area, returning False when no display is ready."""
+        try:
+            screens = NSScreen.screens()
+            screen_info = NSScreen.mainScreen() or (screens[0] if screens else None)
+            if screen_info is None:
+                return False
+
+            screen = screen_info.frame()
+            self.screen_width = int(screen.size.width)
+            self.screen_height = int(screen.size.height)
+            self.region_x1 = self.screen_width // 3
+            self.region_x2 = 2 * self.screen_width // 3
+            self.region_y1 = self.screen_height // 3
+            self.region_y2 = 2 * self.screen_height // 3
+            return self.screen_width > 0 and self.screen_height > 0
+        except Exception as exc:
+            print(f"⚠️ Could not read display bounds: {exc}")
+            return False
 
     def manual_stop(self, sender=None):
         """User requested an immediate stop."""
@@ -76,7 +100,7 @@ class MouseJigglerApp(rumps.App):
             self._stop_jiggling("Stopped manually.")
             print("🛑 Jiggling manually stopped.")
         else:
-            rumps.notification(title="Mouse Jiggler", subtitle="Not running", message="Jiggler is not currently running.")
+            self._notify(title="Mouse Jiggler", subtitle="Not running", message="Jiggler is not currently running.")
             print("ℹ️ Manual stop requested but jiggler was not running.")
 
     def _jiggle_loop(self):
@@ -120,11 +144,20 @@ class MouseJigglerApp(rumps.App):
         """Handle stopping logic and notify the user."""
         self.jiggling = False
         self.stop_time = None
-        rumps.notification(
+        self._notify(
             title="Mouse Jiggler",
             subtitle="Stopped",
             message=message
         )
+
+    def _notify(self, title, subtitle, message):
+        """Send a notification without letting a missing Info.plist break the app."""
+        try:
+            rumps.notification(title=title, subtitle=subtitle, message=message)
+        except RuntimeError as exc:
+            # rumps requires an Info.plist next to sys.executable. Plain script
+            # launches (for example, from a conda interpreter) may not have one.
+            print(f"⚠️ Notification unavailable: {exc}")
 
 if __name__ == "__main__":
     MouseJigglerApp().run()
